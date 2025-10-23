@@ -117,7 +117,343 @@ async function run() {
       res.send(result);
     });
 
+    const database = client.db("assignmintDB");
 
+    // POST - Add a new comment
+    app.post('/comments', async (req, res) => {
+      try {
+        const commentData = req.body;
+        
+        // Validate required fields
+        if (!commentData.assignmentId || !commentData.comment || !commentData.userEmail) {
+          return res.status(400).json({ 
+            error: 'Missing required fields: assignmentId, comment, and userEmail are required' 
+          });
+        }
+
+        // Create comment object
+        const newComment = {
+          assignmentId: commentData.assignmentId,
+          userEmail: commentData.userEmail,
+          userName: commentData.userName || 'Anonymous',
+          userPhoto: commentData.userPhoto || '',
+          comment: commentData.comment,
+          createdAt: commentData.createdAt || new Date().toISOString(),
+        };
+
+        const commentsCollection = database.collection('comments');
+        const result = await commentsCollection.insertOne(newComment);
+
+        res.status(201).json({
+          message: 'Comment added successfully',
+          commentId: result.insertedId,
+          comment: newComment
+        });
+      } catch (error) {
+        console.error('Error adding comment:', error);
+        res.status(500).json({ error: 'Failed to add comment' });
+      }
+    });
+
+    // GET - Fetch all comments for a specific assignment
+    app.get('/assignments/:id/comments', async (req, res) => {
+      try {
+        const assignmentId = req.params.id;
+        
+        const commentsCollection = database.collection('comments');
+        const comments = await commentsCollection
+          .find({ assignmentId: assignmentId })
+          .sort({ createdAt: -1 }) // Most recent first
+          .toArray();
+
+        res.status(200).json(comments);
+      } catch (error) {
+        console.error('Error fetching comments:', error);
+        res.status(500).json({ error: 'Failed to fetch comments' });
+      }
+    });
+
+    // Optional: DELETE - Delete a comment (if user is the owner)
+    app.delete('/comments/:id', async (req, res) => {
+      try {
+        const commentId = req.params.id;
+        const userEmail = req.body.userEmail; // Or get from auth token
+
+        const commentsCollection = database.collection('comments');
+        
+        // First check if comment belongs to user
+        const comment = await commentsCollection.findOne({ 
+          _id: new ObjectId(commentId) 
+        });
+
+        if (!comment) {
+          return res.status(404).json({ error: 'Comment not found' });
+        }
+
+        if (comment.userEmail !== userEmail) {
+          return res.status(403).json({ error: 'Unauthorized to delete this comment' });
+        }
+
+        const result = await commentsCollection.deleteOne({ 
+          _id: new ObjectId(commentId) 
+        });
+
+        if (result.deletedCount === 1) {
+          res.status(200).json({ message: 'Comment deleted successfully' });
+        } else {
+          res.status(404).json({ error: 'Comment not found' });
+        }
+      } catch (error) {
+        console.error('Error deleting comment:', error);
+        res.status(500).json({ error: 'Failed to delete comment' });
+      }
+    });
+
+    // Optional: PUT - Edit a comment (if user is the owner)
+    app.put('/comments/:id', async (req, res) => {
+      try {
+        const commentId = req.params.id;
+        const { userEmail, comment } = req.body;
+
+        if (!comment || !comment.trim()) {
+          return res.status(400).json({ error: 'Comment cannot be empty' });
+        }
+
+        const commentsCollection = database.collection('comments');
+        
+        // Check if comment belongs to user
+        const existingComment = await commentsCollection.findOne({ 
+          _id: new ObjectId(commentId) 
+        });
+
+        if (!existingComment) {
+          return res.status(404).json({ error: 'Comment not found' });
+        }
+
+        if (existingComment.userEmail !== userEmail) {
+          return res.status(403).json({ error: 'Unauthorized to edit this comment' });
+        }
+
+        const result = await commentsCollection.updateOne(
+          { _id: new ObjectId(commentId) },
+          { 
+            $set: { 
+              comment: comment,
+              updatedAt: new Date().toISOString()
+            } 
+          }
+        );
+
+        if (result.modifiedCount === 1) {
+          res.status(200).json({ message: 'Comment updated successfully' });
+        } else {
+          res.status(404).json({ error: 'Comment not found' });
+        }
+      } catch (error) {
+        console.error('Error updating comment:', error);
+        res.status(500).json({ error: 'Failed to update comment' });
+      }
+    });
+
+
+    // ============================================
+    // 1. ADD BOOKMARK
+    // POST /bookmarks
+    // ============================================
+    app.post('/bookmarks', async (req, res) => {
+      try {
+        const bookmarkData = req.body;
+        
+        // Validate required fields
+        if (!bookmarkData.assignmentId || !bookmarkData.userEmail) {
+          return res.status(400).json({ 
+            error: 'Missing required fields: assignmentId and userEmail are required' 
+          });
+        }
+
+        const bookmarksCollection = database.collection('bookmarks');
+
+        // Check if bookmark already exists
+        const existingBookmark = await bookmarksCollection.findOne({
+          assignmentId: bookmarkData.assignmentId,
+          userEmail: bookmarkData.userEmail
+        });
+
+        if (existingBookmark) {
+          return res.status(409).json({ 
+            error: 'Assignment already bookmarked',
+            bookmark: existingBookmark 
+          });
+        }
+
+        // Create bookmark object
+        const newBookmark = {
+          assignmentId: bookmarkData.assignmentId,
+          userEmail: bookmarkData.userEmail,
+          assignmentTitle: bookmarkData.assignmentTitle || '',
+          assignmentPhoto: bookmarkData.assignmentPhoto || '',
+          assignmentMarks: bookmarkData.assignmentMarks || 0,
+          assignmentDueDate: bookmarkData.assignmentDueDate || '',
+          bookmarkedAt: bookmarkData.bookmarkedAt || new Date().toISOString(),
+        };
+
+        // Insert new bookmark
+        const result = await bookmarksCollection.insertOne(newBookmark);
+
+        res.status(201).json({
+          message: 'Bookmark added successfully',
+          bookmarkId: result.insertedId,
+          bookmark: newBookmark
+        });
+
+      } catch (error) {
+        console.error('Error adding bookmark:', error);
+        res.status(500).json({ error: 'Failed to add bookmark' });
+      }
+    });
+
+    // ============================================
+    // 2. REMOVE BOOKMARK
+    // DELETE /bookmarks/:assignmentId
+    // Query param: email (user's email)
+    // ============================================
+    app.delete('/bookmarks/:assignmentId', async (req, res) => {
+      try {
+        const { assignmentId } = req.params;
+        const { email } = req.query;
+
+        if (!email) {
+          return res.status(400).json({ error: 'User email is required as query parameter' });
+        }
+
+        const bookmarksCollection = database.collection('bookmarks');
+
+        const result = await bookmarksCollection.deleteOne({
+          assignmentId: assignmentId,
+          userEmail: email
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ error: 'Bookmark not found' });
+        }
+
+        res.status(200).json({
+          message: 'Bookmark removed successfully',
+          deletedCount: result.deletedCount
+        });
+
+      } catch (error) {
+        console.error('Error removing bookmark:', error);
+        res.status(500).json({ error: 'Failed to remove bookmark' });
+      }
+    });
+
+    // ============================================
+    // 3. CHECK BOOKMARK STATUS
+    // GET /bookmarks/check/:assignmentId
+    // Query param: email (user's email)
+    // ============================================
+    app.get('/bookmarks/check/:assignmentId', async (req, res) => {
+      try {
+        const { assignmentId } = req.params;
+        const { email } = req.query;
+
+        if (!email) {
+          return res.status(400).json({ error: 'User email is required as query parameter' });
+        }
+
+        const bookmarksCollection = database.collection('bookmarks');
+
+        const bookmark = await bookmarksCollection.findOne({
+          assignmentId: assignmentId,
+          userEmail: email
+        });
+
+        res.status(200).json({
+          isBookmarked: !!bookmark,
+          bookmark: bookmark || null
+        });
+
+      } catch (error) {
+        console.error('Error checking bookmark status:', error);
+        res.status(500).json({ error: 'Failed to check bookmark status' });
+      }
+    });
+
+    // ============================================
+    // 4. GET USER'S BOOKMARKS
+    // GET /bookmarks/user/:email
+    // ============================================
+    app.get('/bookmarks/user/:email', async (req, res) => {
+      try {
+        const { email } = req.params;
+
+        const bookmarksCollection = database.collection('bookmarks');
+
+        const bookmarks = await bookmarksCollection
+          .find({ userEmail: email })
+          .sort({ bookmarkedAt: -1 })
+          .toArray();
+
+        res.status(200).json({
+          count: bookmarks.length,
+          bookmarks: bookmarks
+        });
+
+      } catch (error) {
+        console.error('Error fetching user bookmarks:', error);
+        res.status(500).json({ error: 'Failed to fetch bookmarks' });
+      }
+    });
+
+    // ============================================
+    // 5. GET BOOKMARK COUNT FOR ASSIGNMENT
+    // GET /bookmarks/count/:assignmentId
+    // ============================================
+    app.get('/bookmarks/count/:assignmentId', async (req, res) => {
+      try {
+        const { assignmentId } = req.params;
+
+        const bookmarksCollection = database.collection('bookmarks');
+
+        const count = await bookmarksCollection.countDocuments({
+          assignmentId: assignmentId
+        });
+
+        res.status(200).json({
+          assignmentId: assignmentId,
+          bookmarkCount: count
+        });
+
+      } catch (error) {
+        console.error('Error counting bookmarks:', error);
+        res.status(500).json({ error: 'Failed to count bookmarks' });
+      }
+    });
+
+    // ============================================
+    // 6. GET ALL BOOKMARKS (Optional - for admin)
+    // GET /bookmarks
+    // ============================================
+    app.get('/bookmarks', async (req, res) => {
+      try {
+        const bookmarksCollection = database.collection('bookmarks');
+
+        const bookmarks = await bookmarksCollection
+          .find({})
+          .sort({ bookmarkedAt: -1 })
+          .toArray();
+
+        res.status(200).json({
+          count: bookmarks.length,
+          bookmarks: bookmarks
+        });
+
+      } catch (error) {
+        console.error('Error fetching all bookmarks:', error);
+        res.status(500).json({ error: 'Failed to fetch bookmarks' });
+      }
+    });
 
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
