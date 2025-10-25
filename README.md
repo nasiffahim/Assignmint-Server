@@ -16,6 +16,11 @@ It handles:
 
 The API ensures secure communication using **JWT authentication** and **role-based access control** for grading.
 
+Newly added features:
+- Assignment Search and Filtering
+- Assignment Bookmarks
+- Functional Comment section in Assignment details page
+
 ---
 
 ## 🛠 Tech Stack
